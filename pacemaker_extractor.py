@@ -1,48 +1,66 @@
-# part1: インポートとデータクラスの定義
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import PyPDF2
 import re
 import csv
 import os
-from dataclasses import dataclass
 from typing import Optional
 
-@dataclass
 class DeviceData:
-    患者ID: str
-    送信日時: str
-    心房リードインピーダンス: Optional[str] = ""
-    心室リードインピーダンス: Optional[str] = ""
-    心房ペーシング閾値: Optional[str] = ""
-    心房パルス幅: Optional[str] = ""
-    心室ペーシング閾値: Optional[str] = ""
-    心室パルス幅: Optional[str] = ""
-    P波高値: Optional[str] = ""
-    R波高値: Optional[str] = ""
-    予測寿命_最小: Optional[str] = ""
-    予測寿命_最大: Optional[str] = ""
-    ATAF時間パーセント: Optional[str] = ""
-    VT回数: Optional[str] = ""
-    ASVS: Optional[str] = ""
-    ASVP: Optional[str] = ""
-    APVS: Optional[str] = ""
-    APVP: Optional[str] = ""
+    def __init__(self, 患者ID, 送信日時, **kwargs):
+        self.患者ID = 患者ID
+        self.送信日時 = 送信日時
+        self.デバイスタイプ = kwargs.get('デバイスタイプ', '')
+        self.心房リードインピーダンス = kwargs.get('心房リードインピーダンス', None)
+        self.心室リードインピーダンス = kwargs.get('心室リードインピーダンス', None)
+        self.心房ペーシング閾値 = kwargs.get('心房ペーシング閾値', None)
+        self.心房パルス幅 = kwargs.get('心房パルス幅', None)
+        self.心室ペーシング閾値 = kwargs.get('心室ペーシング閾値', None)
+        self.心室パルス幅 = kwargs.get('心室パルス幅', None)
+        self.P波高値 = kwargs.get('P波高値', None)
+        self.R波高値 = kwargs.get('R波高値', None)
+        self.予測寿命_最小 = kwargs.get('予測寿命_最小', None)
+        self.予測寿命_最大 = kwargs.get('予測寿命_最大', None)
+        self.ATAF時間パーセント = kwargs.get('ATAF時間パーセント', None)
+        self.VT回数 = kwargs.get('VT回数', None)
+        self.ASVS = kwargs.get('ASVS', None)
+        self.ASVP = kwargs.get('ASVP', None)
+        self.APVS = kwargs.get('APVS', None)
+        self.APVP = kwargs.get('APVP', None)
+        # Micra AV2用パラメータ
+        self.キャプチャ閾値 = kwargs.get('キャプチャ閾値', None)
+        self.AMVS = kwargs.get('AMVS', None)
+        self.VSオンリー = kwargs.get('VSオンリー', None)
+        self.AMVP = kwargs.get('AMVP', None)
+        self.VPオンリー = kwargs.get('VPオンリー', None)
+        # Cobalt/Evera用パラメータ
+        self.RVコイルインピーダンス = kwargs.get('RVコイルインピーダンス', None)
+        self.SVCコイルインピーダンス = kwargs.get('SVCコイルインピーダンス', None)
+        self.VF治療回数 = kwargs.get('VF治療回数', None)
+        self.VT治療回数 = kwargs.get('VT治療回数', None)
+        # LV関連パラメータ
+        self.LVインピーダンス = kwargs.get('LVインピーダンス', None)
+        self.LVペーシング閾値 = kwargs.get('LVペーシング閾値', None)
+        self.LVパルス幅 = kwargs.get('LVパルス幅', None)
 
     def get_value(self, attr_name: str) -> str:
-        """属性値を取得し、Noneの場合は空文字列を返す"""
+        """属性値を取得し、Noneまたは"None"の場合は空文字列を返す"""
         value = getattr(self, attr_name)
-        return value if value is not None else ""
+        if value is None or str(value) == "None":
+          return ""
+        return str(value)
 
     def get_formatted_date(self) -> str:
         """送信日時を整形された形式で返す"""
-        try:
-            # 元の形式（例：01-Jun-2022 17:04:43）から日付部分を抽出
-            from datetime import datetime
-            date_obj = datetime.strptime(self.送信日時.split()[0], '%d-%b-%Y')
-            return date_obj.strftime('%Y/%m/%d')
-        except:
-            return self.送信日時
+        from datetime import datetime
+        date_formats = ['%d-%b-%Y', '%Y.%m.%d']
+        for date_format in date_formats:
+            try:
+                date_obj = datetime.strptime(self.送信日時.split()[0], date_format)
+                return date_obj.strftime('%Y年%m月%d日')
+            except ValueError:
+                continue
+        return self.送信日時
 
     def get_formatted_lifetime(self) -> str:
         """予測寿命を「最小-最大y」の形式で返す"""
@@ -52,11 +70,11 @@ class DeviceData:
             return f"{min_life}-{max_life}y"
         return ""
 
-class PDFExtractorApp:
+class PacemakerExtractorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("ペースメーカーデータ抽出")
-        self.root.geometry("1200x800")
+        self.root.geometry("1600x900")
         
         # データ保持用変数
         self.pdf_text = ""
@@ -64,7 +82,6 @@ class PDFExtractorApp:
         
         self.create_widgets()
         
-        # part2: UIの構築
     def create_modern_button(self, parent, text, command):
         """モダンなボタンを作成するヘルパーメソッド"""
         button = tk.Button(parent,
@@ -141,58 +158,66 @@ class PDFExtractorApp:
         self.text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 抽出結果カード
-        results_card = ttk.LabelFrame(main_frame, text="抽出結果", padding="15", style='Card.TLabelframe')
-        results_card.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-        # Treeviewのコンテナ
-        tree_container = ttk.Frame(results_card)
+        # 結果表示カード
+        result_card = ttk.LabelFrame(main_frame, text="抽出結果", padding="15", style='Card.TLabelframe')
+        result_card.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 結果表示エリアのコンテナフレーム
+        tree_container = ttk.Frame(result_card)
         tree_container.pack(fill=tk.BOTH, expand=True)
-
-        # Treeviewの設定
-        columns = (
-            'id', 'datetime', 'ra_imp', 'rv_imp', 'ra_thresh', 'ra_pw',
-            'rv_thresh', 'rv_pw', 'p_wave', 'r_wave', 'lifetime',
-            'ataf', 'vt', 'asvs', 'asvp', 'apvs', 'apvp'
-        )
         
-        self.result_tree = ttk.Treeview(tree_container, columns=columns,
-                                      style='Modern.Treeview', height=15)
+        # 結果表示エリアとスクロールバー
+        self.result_tree = ttk.Treeview(tree_container, columns=[
+            '患者ID', '送信日時', '心房リードインピーダンス', '心室リードインピーダンス',
+            '心房ペーシング閾値', '心房パルス幅', '心室ペーシング閾値', '心室パルス幅',
+            'P波高値', 'R波高値', '予測寿命_最小', '予測寿命_最大', 'ATAF時間パーセント', 'VT回数',  # ここを変更
+            'AS-VS%', 'AS-VP%', 'AP-VS%', 'AP-VP%', 'キャプチャ閾値', 'AMVS', 'VSオンリー',
+            'AMVP', 'VPオンリー', 'RVコイルインピーダンス', 'SVCコイルインピーダンス',
+            'VF治療回数', 'VT治療回数', 'LVインピーダンス', 'LVペーシング閾値', 'LVパルス幅'
+        ], show='headings', style='Modern.Treeview')
         
-        # スクロールバーの設定
-        vsb = ttk.Scrollbar(tree_container, orient="vertical",
-                           command=self.result_tree.yview)
-        hsb = ttk.Scrollbar(tree_container, orient="horizontal",
-                           command=self.result_tree.xview)
-        self.result_tree.configure(yscrollcommand=vsb.set,
-                                 xscrollcommand=hsb.set)
+        vsb = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.result_tree.yview)
+        hsb = ttk.Scrollbar(tree_container, orient=tk.HORIZONTAL, command=self.result_tree.xview)
+        self.result_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         # カラム設定
         column_names = {
-            'id': '患者ID',
-            'datetime': '送信日時',
-            'ra_imp': '心房インピーダンス',
-            'rv_imp': '心室インピーダンス',
-            'ra_thresh': '心房閾値',
-            'ra_pw': '心房PW',
-            'rv_thresh': '心室閾値',
-            'rv_pw': '心室PW',
-            'p_wave': 'P波高',
-            'r_wave': 'R波高',
-            'lifetime': '予測寿命',
-            'ataf': 'AT/AF%',
-            'vt': 'VT回数',
-            'asvs': 'AS-VS%',
-            'asvp': 'AS-VP%',
-            'apvs': 'AP-VS%',
-            'apvp': 'AP-VP%'
+            '患者ID': '患者ID',
+            '送信日時': '送信日時',
+            '心房リードインピーダンス': '心房インピーダンス',
+            '心室リードインピーダンス': '心室インピーダンス',
+            '心房ペーシング閾値': '心房閾値',
+            '心房パルス幅': '心房PW',
+            '心室ペーシング閾値': '心室閾値',
+            '心室パルス幅': '心室PW',
+            'P波高値': 'P波高',
+            'R波高値': 'R波高',
+            '予測寿命_最小': '予測寿命_最小',
+            '予測寿命_最大': '予測寿命_最大',
+            'ATAF時間パーセント': 'AT/AF%',  # キーを一致させる
+            'VT回数': 'VT回数',
+            'AS-VS%': 'AS-VS%',
+            'AS-VP%': 'AS-VP%',
+            'AP-VS%': 'AP-VS%',
+            'AP-VP%': 'AP-VP%',
+            'キャプチャ閾値': 'キャプチャ閾値',
+            'AMVS': 'AMVS',
+            'VSオンリー': 'VSオンリー',
+            'AMVP': 'AMVP',
+            'VPオンリー': 'VPオンリー',
+            'RVコイルインピーダンス': 'RVコイル',
+            'SVCコイルインピーダンス': 'SVCコイル',
+            'VF治療回数': 'VF治療回数',
+            'VT治療回数': 'VT治療回数',
+            'LVインピーダンス': 'LVインピーダンス',
+            'LVペーシング閾値': 'LV閾値',
+            'LVパルス幅': 'LV PW'
         }
 
         self.result_tree.column('#0', width=0, stretch=tk.NO)
-        for col in columns:
-            self.result_tree.column(col, width=100, stretch=True)
-            self.result_tree.heading(col, text=column_names[col],
-                                  anchor=tk.CENTER)
+        for col in self.result_tree['columns']:
+            self.result_tree.column(col, width=150, stretch=True)
+            self.result_tree.heading(col, text=column_names[col], anchor=tk.CENTER)
 
         # コンポーネントの配置
         self.result_tree.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
@@ -208,9 +233,8 @@ class PDFExtractorApp:
         self.root.grid_rowconfigure(0, weight=1)
 
         # 初期ウィンドウサイズの設定
-        self.root.geometry("1400x800")
-        
-        # part3: ファイル操作とデータ抽出
+        self.root.geometry("1600x900")
+
     def load_pdf(self):
         file_paths = filedialog.askopenfilenames(
             filetypes=[("PDFファイル", "*.pdf")],
@@ -300,7 +324,22 @@ class PDFExtractorApp:
         
         print(f"警告: {data_type}の値が見つかりませんでした")
         return tuple([None] * len(re.findall(r'\(', patterns[0])))
-        
+
+    def is_valid_data(self, data: DeviceData) -> bool:
+        """データが有効（少なくとも1つ以上のパラメータが存在）かをチェック"""
+        # 患者IDと送信日時以外のフィールドをチェック
+        fields_to_check = [
+            data.心房リードインピーダンス, data.心室リードインピーダンス,
+            data.心房ペーシング閾値, data.心室ペーシング閾値,
+            data.P波高値, data.R波高値,
+            data.予測寿命_最小, data.予測寿命_最大,
+            data.キャプチャ閾値, data.AMVS, data.VSオンリー,
+            data.RVコイルインピーダンス, data.SVCコイルインピーダンス,
+            data.LVインピーダンス, data.LVペーシング閾値
+        ]
+        # 1つでもNoneでない値があればTrue
+        return any(field is not None for field in fields_to_check)
+
     def extract_single_data_set(self, section: str) -> Optional[DeviceData]:
         try:
             # 患者IDと送信日時の抽出（これらは必須）
@@ -309,27 +348,21 @@ class PDFExtractorApp:
             
             if not id_match or not datetime_match:
                 return None
-            
-            # データオブジェクトの作成（デフォルト値として空文字を使用）
+
+            # デバイスタイプの判定を先に行う
+            device_type = ""
+            if re.search(r'Micra\s*AV', section):
+                device_type = "Micra AV2"
+            elif re.search(r'Cobalt', section):
+                device_type = "Cobalt"
+            elif re.search(r'Evera', section):
+                device_type = "Evera"
+
+            # データオブジェクトの作成
             data = DeviceData(
                 患者ID=id_match.group(1),
                 送信日時=datetime_match.group(1),
-                心房リードインピーダンス="",
-                心室リードインピーダンス="",
-                心房ペーシング閾値="",
-                心房パルス幅="",
-                心室ペーシング閾値="",
-                心室パルス幅="",
-                P波高値="",
-                R波高値="",
-                予測寿命_最小="",
-                予測寿命_最大="",
-                ATAF時間パーセント="",
-                VT回数="",
-                ASVS="",
-                ASVP="",
-                APVS="",
-                APVP=""
+                デバイスタイプ=device_type
             )
             
             # リードインピーダンスの抽出
@@ -448,14 +481,78 @@ class PDFExtractorApp:
                             elif mode == 'AP-VP' and not data.APVP:
                                 data.APVP = value
 
-            return data
+            # デバイス特有のパラメータの抽出
+            if device_type == "Micra AV2":
+                # キャプチャ閾値の抽出（RVペーシング閾値と同義）
+                capture_patterns = [
+                    r'キャプチャ閾値\s+(\d+\.?\d*)\s*V',
+                    r'キャプチャ.*?(\d+\.?\d*)\s*V'
+                ]
+                capture_values = self.extract_data_with_retry(section, capture_patterns, "キャプチャ閾値")
+                if capture_values and len(capture_values) >= 1:
+                    data.キャプチャ閾値 = capture_values[0]
+                    data.心室ペーシング閾値 = capture_values[0]
 
+                # Micra特有のペーシングモード抽出
+                micra_mode_patterns = {
+                    'AMVS': r'AM-VS\s+([<\d\.]+)%',
+                    'VSオンリー': r'VSオンリー\s+([<\d\.]+)%',
+                    'AMVP': r'AM-VP\s+([<\d\.]+)%',
+                    'VPオンリー': r'VPオンリー\s+([<\d\.]+)%'
+                }
+                
+                for mode, pattern in micra_mode_patterns.items():
+                    match = re.search(pattern, section)
+                    if match:
+                        setattr(data, mode, match.group(1))
+
+            elif device_type in ["Cobalt", "Evera"]:
+                # コイルインピーダンスの抽出
+                coil_patterns = {
+                    'RVコイルインピーダンス': r'RV\s*coil[^\d]*(\d+)\s*Ω',
+                    'SVCコイルインピーダンス': r'SVC\s*coil[^\d]*(\d+)\s*Ω'
+                }
+                
+                for param, pattern in coil_patterns.items():
+                    match = re.search(pattern, section)
+                    if match:
+                        setattr(data, param, match.group(1))
+
+                # 治療回数の抽出
+                therapy_patterns = {
+                    'VF治療回数': r'VF.*?治療済み.*?(\d+)',
+                    'VT治療回数': r'VT.*?治療済み.*?(\d+)'
+                }
+                
+                for param, pattern in therapy_patterns.items():
+                    match = re.search(pattern, section)
+                    if match:
+                        setattr(data, param, match.group(1))
+
+            # LVパラメータの抽出（デバイスタイプに関係なく）
+            if 'LV' in section:
+                lv_patterns = {
+                    'LVインピーダンス': r'LV.*?インピーダンス[^\d]*(\d+)\s*Ω',
+                    'LVペーシング閾値': r'LV.*?ペーシング閾値\s+([\d\.]+)\s*V',
+                    'LVパルス幅': r'LV.*?パルス幅\s+([\d\.]+)\s*ms'
+                }
+                
+                for param, pattern in lv_patterns.items():
+                    match = re.search(pattern, section)
+                    if match:
+                        setattr(data, param, match.group(1))
+
+            # 最後にデータの有効性をチェック
+            if not self.is_valid_data(data):
+                return None
+            
+            return data
+            
         except Exception as e:
             print(f"データ抽出中にエラーが発生: {str(e)}")
             print(f"問題のあるセクション: {section[:200]}...")
             return None
-        
-     # part4: データ抽出とCSV出力（続き）
+
     def extract_data(self):
         if not self.pdf_text:
             messagebox.showwarning("警告", "PDFファイルを先に読み込んでください")
@@ -470,17 +567,31 @@ class PDFExtractorApp:
         # Quick Look IIで区切ってセクションに分割
         sections = re.split(r'Quick Look II', self.pdf_text)
         
+        # 重複チェック用のセット
+        seen_data = set()
+        
         for section in sections:
             if not section.strip():
                 continue
                 
             data = self.extract_single_data_set(section)
             if data:
+                # 患者IDと送信日時のタプルを作成
+                data_key = (data.患者ID, data.送信日時)
+                
+                # 重複チェック
+                if data_key in seen_data:
+                    continue
+                
+                # データの有効性チェック
+                if not self.is_valid_data(data):
+                    continue
+                
+                seen_data.add(data_key)
                 self.extracted_data.append(data)
-                # TreeViewへの表示を更新
                 self.result_tree.insert('', tk.END, values=(
                     data.get_value('患者ID'),
-                    data.get_formatted_date(),
+                    data.get_formatted_date(),  # 送信日時を整形された形式で取得
                     data.get_value('心房リードインピーダンス'),
                     data.get_value('心室リードインピーダンス'),
                     data.get_value('心房ペーシング閾値'),
@@ -489,51 +600,27 @@ class PDFExtractorApp:
                     data.get_value('心室パルス幅'),
                     data.get_value('P波高値'),
                     data.get_value('R波高値'),
-                    data.get_formatted_lifetime(),
+                    data.get_value('予測寿命_最小'),
+                    data.get_value('予測寿命_最大'),
                     data.get_value('ATAF時間パーセント'),
                     data.get_value('VT回数'),
                     data.get_value('ASVS'),
                     data.get_value('ASVP'),
                     data.get_value('APVS'),
-                    data.get_value('APVP')
+                    data.get_value('APVP'),
+                    data.get_value('キャプチャ閾値'),
+                    data.get_value('AMVS'),
+                    data.get_value('VSオンリー'),
+                    data.get_value('AMVP'),
+                    data.get_value('VPオンリー'),
+                    data.get_value('RVコイルインピーダンス'),
+                    data.get_value('SVCコイルインピーダンス'),
+                    data.get_value('VF治療回数'),
+                    data.get_value('VT治療回数'),
+                    data.get_value('LVインピーダンス'),
+                    data.get_value('LVペーシング閾値'),
+                    data.get_value('LVパルス幅')
                 ))
-        
-        messagebox.showinfo("成功", f"{len(self.extracted_data)}件のデータを抽出しました")
-
-    def export_to_csv(self):
-        # [前半部分は同じ]
-        
-        # CSVヘッダーとデータの書き込み
-        writer.writerow([
-            "患者ID", "送信日時", 
-            "心房リードインピーダンス", "心室リードインピーダンス",
-            "心房ペーシング閾値", "心房パルス幅",
-            "心室ペーシング閾値", "心室パルス幅",
-            "P波高値", "R波高値",
-            "予測寿命", "AT/AF時間%", "VT回数",
-            "AS-VS%", "AS-VP%", "AP-VS%", "AP-VP%"
-        ])
-        
-        for data in self.extracted_data:
-            writer.writerow([
-                data.get_value('患者ID'),
-                data.get_formatted_date(),
-                data.get_value('心房リードインピーダンス'),
-                data.get_value('心室リードインピーダンス'),
-                data.get_value('心房ペーシング閾値'),
-                data.get_value('心房パルス幅'),
-                data.get_value('心室ペーシング閾値'),
-                data.get_value('心室パルス幅'),
-                data.get_value('P波高値'),
-                data.get_value('R波高値'),
-                data.get_formatted_lifetime(),
-                data.get_value('ATAF時間パーセント'),
-                data.get_value('VT回数'),
-                data.get_value('ASVS'),
-                data.get_value('ASVP'),
-                data.get_value('APVS'),
-                data.get_value('APVP')
-            ])
         
         messagebox.showinfo("成功", f"{len(self.extracted_data)}件のデータを抽出しました")
 
@@ -560,7 +647,11 @@ class PDFExtractorApp:
                         "P波高値", "R波高値",
                         "予測寿命_最小", "予測寿命_最大",
                         "AT/AF時間%", "VT回数",
-                        "AS-VS%", "AS-VP%", "AP-VS%", "AP-VP%"
+                        "AS-VS%", "AS-VP%", "AP-VS%", "AP-VP%",
+                        "キャプチャ閾値", "AMVS", "VSオンリー",
+                        "AMVP", "VPオンリー", "RVコイルインピーダンス",
+                        "SVCコイルインピーダンス", "VF治療回数", "VT治療回数",
+                        "LVインピーダンス", "LVペーシング閾値", "LVパルス幅"
                     ])
                     
                     # データ行を書き込み
@@ -583,14 +674,26 @@ class PDFExtractorApp:
                             data.get_value('ASVS'),
                             data.get_value('ASVP'),
                             data.get_value('APVS'),
-                            data.get_value('APVP')
+                            data.get_value('APVP'),
+                            data.get_value('キャプチャ閾値'),
+                            data.get_value('AMVS'),
+                            data.get_value('VSオンリー'),
+                            data.get_value('AMVP'),
+                            data.get_value('VPオンリー'),
+                            data.get_value('RVコイルインピーダンス'),
+                            data.get_value('SVCコイルインピーダンス'),
+                            data.get_value('VF治療回数'),
+                            data.get_value('VT治療回数'),
+                            data.get_value('LVインピーダンス'),
+                            data.get_value('LVペーシング閾値'),
+                            data.get_value('LVパルス幅')
                         ])
                 
-                messagebox.showinfo("成功", "CSVファイルの出力が完了しました")
+                messagebox.showinfo("成功", f"{len(self.extracted_data)}件のデータをCSVに出力しました")
             except Exception as e:
                 messagebox.showerror("エラー", f"CSVファイルの出力中にエラーが発生しました: {str(e)}")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = PDFExtractorApp(root)
+    app = PacemakerExtractorApp(root)
     root.mainloop()
