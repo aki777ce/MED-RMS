@@ -28,7 +28,7 @@ class DeviceData:
         self.APVS = kwargs.get('APVS', None)
         self.APVP = kwargs.get('APVP', None)
         # Micra AV2用パラメータ
-        self.キャプチャ閾値 = kwargs.get('キャプチャ閾値', None)
+        self.キャプチャ閾値 = kwargs.get('心室閾値', None)
         self.AMVS = kwargs.get('AMVS', None)
         self.VSオンリー = kwargs.get('VSオンリー', None)
         self.AMVP = kwargs.get('AMVP', None)
@@ -171,7 +171,7 @@ class PacemakerExtractorApp:
             '患者ID', '送信日時', '心房リードインピーダンス', '心室リードインピーダンス',
             '心房ペーシング閾値', '心房パルス幅', '心室ペーシング閾値', '心室パルス幅',
             'P波高値', 'R波高値', '予測寿命_最小', '予測寿命_最大', 'ATAF時間パーセント', 'VT回数',  # ここを変更
-            'AS-VS%', 'AS-VP%', 'AP-VS%', 'AP-VP%', 'キャプチャ閾値', 'AMVS', 'VSオンリー',
+            'AS-VS%', 'AS-VP%', 'AP-VS%', 'AP-VP%', 'AMVS', 'VSオンリー',
             'AMVP', 'VPオンリー', 'RVコイルインピーダンス', 'SVCコイルインピーダンス',
             'VF治療回数', 'VT治療回数', 'LVインピーダンス', 'LVペーシング閾値', 'LVパルス幅'
         ], show='headings', style='Modern.Treeview')
@@ -200,7 +200,6 @@ class PacemakerExtractorApp:
             'AS-VP%': 'AS-VP%',
             'AP-VS%': 'AP-VS%',
             'AP-VP%': 'AP-VP%',
-            'キャプチャ閾値': 'キャプチャ閾値',
             'AMVS': 'AMVS',
             'VSオンリー': 'VSオンリー',
             'AMVP': 'AMVP',
@@ -234,6 +233,18 @@ class PacemakerExtractorApp:
 
         # 初期ウィンドウサイズの設定
         self.root.geometry("1600x900")
+
+    def extract_data(self, text):
+        """テキストからデータを抽出するメソッド"""
+        lines = text.split('\n')
+        for line in lines:
+            # 心房データを無視する
+            if any(keyword in line for keyword in ["心房", "P波", "RA"]):
+                continue
+            # 心室データを抽出する
+            if any(keyword in line for keyword in ["RV", "R波", "電極インピーダンス", "心室閾値", "電圧/パルス幅設定値"]):
+                self.extracted_data.append(line)
+        return self.extracted_data
 
     def load_pdf(self):
         file_paths = filedialog.askopenfilenames(
@@ -367,24 +378,97 @@ class PacemakerExtractorApp:
             
             # リードインピーダンスの抽出
             imp_patterns = [
+                # 既存のパターン
                 r'リードインピーダンス\s+(\d+)\s*Ω\s+(\d+)\s*Ω',
                 r'Aペーシング\s*\([^\)]+\)\s*(\d+)\s*Ω.*\nRVペーシング\s*\([^\)]+\)\s*(\d+)\s*Ω',
                 r'RA\([^\)]+\)\s+RV\([^\)]+\)\s*\nリードインピーダンス\s+(\d+)\s*Ω\s+(\d+)\s*Ω',
-                r'リードインピーダンス.*?(\d+)\s*Ω.*?(\d+)\s*Ω'
+                r'リードインピーダンス.*?(\d+)\s*Ω.*?(\d+)\s*Ω',
+                # 電極インピーダンスのパターン
+                r'電極インピーダンス\s+(\d+)\s*Ω',  # 単独の電極インピーダンス
+                r'電極インピーダンス.*?(\d+)\s*Ω',    # 周辺テキストがある場合の電極インピーダンス
+                # ペーシングインピーダンスのパターン追加
+                r'ペーシングインピーダンス\s+(\d+)\s*Ω\s+(\d+)\s*Ω\s+(\d+)\s*Ω',  # 3値パターン
+                r'ペーシングインピーダンス\s+(\d+)\s*Ω\s+(\d+)\s*Ω',  # 2値パターン
+                r'ペーシングインピーダンス\s+(\d+)\s*Ω'  # 1値パターン
             ]
-            imp_values = self.extract_data_with_retry(section, imp_patterns, "リードインピーダンス")
-            if imp_values and len(imp_values) == 2:
-                data.心房リードインピーダンス, data.心室リードインピーダンス = imp_values
+
+            imp_values = self.extract_data_with_retry(section, imp_patterns, "リード/電極/ペーシングインピーダンス")
+            if imp_values:
+                if len(imp_values) == 3:
+                    # 3つの値がある場合: 心房、心室、LV
+                    data.心房リードインピーダンス = imp_values[0]
+                    data.心室リードインピーダンス = imp_values[1]
+                    data.LVインピーダンス = imp_values[2]
+                elif len(imp_values) == 2:
+                    # 2つの値がある場合: 心房、心室
+                    data.心房リードインピーダンス = imp_values[0]
+                    data.心室リードインピーダンス = imp_values[1]
+                elif len(imp_values) == 1:
+                    # 1つの値のみの場合は心室のデータとして扱う
+                    data.心室リードインピーダンス = imp_values[0]
 
             # ペーシング閾値とパルス幅の抽出
-            thresh_patterns = [
-                r'ペーシング閾値\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)',
-                r'電圧/パルス幅設定値\s+(\d+\.?\d*)\s*V\s*/\s*(\d+\.?\d*)\s*ms\s+(\d+\.?\d*)\s*V\s*/\s*(\d+\.?\d*)\s*ms',
-                r'閾値.*?(\d+\.?\d*)\s*V.*?(\d+\.?\d*)\s*ms.*?(\d+\.?\d*)\s*V.*?(\d+\.?\d*)\s*ms'
-            ]
-            thresh_values = self.extract_data_with_retry(section, thresh_patterns, "ペーシング閾値")
-            if thresh_values and len(thresh_values) == 4:
-                data.心房ペーシング閾値, data.心房パルス幅, data.心室ペーシング閾値, data.心室パルス幅 = thresh_values
+            try:
+                # 2値パターン（心房・心室）
+                thresh_patterns = [
+                    r'ペーシング閾値\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)$',
+                    r'キャプチャ閾値\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)$',
+                    r'閾値.*?(\d+\.?\d*)\s*V.*?(\d+\.?\d*)\s*ms.*?(\d+\.?\d*)\s*V.*?(\d+\.?\d*)\s*ms(?!\s+\d)',
+                    r'キャプチャ閾値\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)',
+                    r'キャプチャ閾値.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)'
+                ]
+
+                # 1値パターン（心室のみ）
+                single_thresh_patterns = [
+                    r'キャプチャ閾値\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)(?!\s+\d)',
+                    r'キャプチャ閾値\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)',
+                    r'キャプチャ閾値.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)'
+                ]
+
+                # 3値パターン
+                three_value_patterns = [
+                    r'電圧/パルス幅設定値\s+(\d+\.?\d*)\s*V\s*/\s*(\d+\.?\d*)\s*ms\s+(\d+\.?\d*)\s*V\s*/\s*(\d+\.?\d*)\s*ms\s+(\d+\.?\d*)\s*V\s*/\s*(\d+\.?\d*)\s*ms'
+                ]
+                    
+                # 1値パターンで試行
+                single_values = self.extract_data_with_retry(section, single_thresh_patterns, "単一キャプチャ閾値")
+                if single_values and len(single_values) == 2:
+                        if 'msで' in section:
+                            data.心室パルス幅, data.心室ペーシング閾値 = single_values
+                        else:
+                            data.心室ペーシング閾値, data.心室パルス幅 = single_values
+                
+                else:
+                    # 通常のデバイスの場合の処理
+                    # まず2値パターンで試行
+                    thresh_values = self.extract_data_with_retry(section, thresh_patterns, "ペーシング閾値")
+                    
+                    if thresh_values and len(thresh_values) == 4:
+                        # msでパターンの判定
+                        if any('msで' in pattern for pattern in thresh_patterns):
+                            data.心房パルス幅, data.心房ペーシング閾値, data.心室パルス幅, data.心室ペーシング閾値 = thresh_values
+                        else:
+                            data.心房ペーシング閾値, data.心房パルス幅, data.心室ペーシング閾値, data.心室パルス幅 = thresh_values
+                    else:
+                        # 1値パターン（心室のみ）を試行
+                        single_values = self.extract_data_with_retry(section, single_thresh_patterns, "単一キャプチャ閾値")
+                        if single_values and len(single_values) == 2:
+                            # 心房データは明示的にNoneを設定
+                            data.心房ペーシング閾値 = None
+                            data.心房パルス幅 = None
+                            
+                            if 'msで' in section:
+                                data.心室パルス幅, data.心室ペーシング閾値 = single_values
+                            else:
+                                data.心室ペーシング閾値, data.心室パルス幅 = single_values
+                        else:
+                            # 3値パターンを試行
+                            three_values = self.extract_data_with_retry(section, three_value_patterns, "3値パターン")
+                            if three_values and len(three_values) == 6:
+                                logging.info("3値パターンを検出しました。このデータは別途処理が必要かもしれません。")
+
+            except Exception as e:
+                logging.error(f"ペーシング閾値とパルス幅の抽出でエラーが発生: {str(e)}")
 
             # P/R波高値の抽出
             wave_patterns = [
@@ -401,7 +485,6 @@ class PacemakerExtractorApp:
                 r'予測寿命.*?最小値：\s*([\d\.]+)\s*years.*?最大値：\s*([\d\.]+)\s*years',
                 r'最小値：\s*([\d\.]+)\s*years.*?最大値：\s*([\d\.]+)\s*years',
                 r'予測寿命.*?(\d+\.?\d*)\s*years.*?(\d+\.?\d*)\s*years',
-                r'推定値：\s*[\d\.]+\s*years.*?最小値：\s*([\d\.]+)\s*years.*?最大値：\s*([\d\.]+)\s*years'
             ]
             life_values = self.extract_data_with_retry(section, life_patterns, "予測寿命")
             if life_values and len(life_values) >= 2:
@@ -488,9 +571,9 @@ class PacemakerExtractorApp:
                     r'キャプチャ閾値\s+(\d+\.?\d*)\s*V',
                     r'キャプチャ.*?(\d+\.?\d*)\s*V'
                 ]
-                capture_values = self.extract_data_with_retry(section, capture_patterns, "キャプチャ閾値")
+                capture_values = self.extract_data_with_retry(section, capture_patterns, "心室閾値")
                 if capture_values and len(capture_values) >= 1:
-                    data.キャプチャ閾値 = capture_values[0]
+                    data.心室閾値 = capture_values[0]
                     data.心室ペーシング閾値 = capture_values[0]
 
                 # Micra特有のペーシングモード抽出
@@ -507,21 +590,22 @@ class PacemakerExtractorApp:
                         setattr(data, mode, match.group(1))
 
             elif device_type in ["Cobalt", "Evera"]:
+                
                 # コイルインピーダンスの抽出
                 coil_patterns = {
-                    'RVコイルインピーダンス': r'RV\s*coil[^\d]*(\d+)\s*Ω',
-                    'SVCコイルインピーダンス': r'SVC\s*coil[^\d]*(\d+)\s*Ω'
-                }
-                
+                     'RVコイルインピーダンス': r'RV\s*=\s*(\d+)\s*Ω',
+                      'SVCコイルインピーダンス': r'SVC\s*=\s*(\d+)\s*Ω'
+                      }
+                        
                 for param, pattern in coil_patterns.items():
-                    match = re.search(pattern, section)
-                    if match:
-                        setattr(data, param, match.group(1))
+                     match = re.search(pattern, section)
+                     if match:
+                         setattr(data, param, match.group(1))
 
                 # 治療回数の抽出
                 therapy_patterns = {
-                    'VF治療回数': r'VF.*?治療済み.*?(\d+)',
-                    'VT治療回数': r'VT.*?治療済み.*?(\d+)'
+                    'VF治療回数': r'VF\s+(\d+)',
+                    'VT治療回数': r'VT\s+(\d+)',
                 }
                 
                 for param, pattern in therapy_patterns.items():
@@ -608,7 +692,6 @@ class PacemakerExtractorApp:
                     data.get_value('ASVP'),
                     data.get_value('APVS'),
                     data.get_value('APVP'),
-                    data.get_value('キャプチャ閾値'),
                     data.get_value('AMVS'),
                     data.get_value('VSオンリー'),
                     data.get_value('AMVP'),
@@ -648,7 +731,7 @@ class PacemakerExtractorApp:
                         "予測寿命_最小", "予測寿命_最大",
                         "AT/AF時間%", "VT回数",
                         "AS-VS%", "AS-VP%", "AP-VS%", "AP-VP%",
-                        "キャプチャ閾値", "AMVS", "VSオンリー",
+                        "AMVS", "VSオンリー",
                         "AMVP", "VPオンリー", "RVコイルインピーダンス",
                         "SVCコイルインピーダンス", "VF治療回数", "VT治療回数",
                         "LVインピーダンス", "LVペーシング閾値", "LVパルス幅"
@@ -675,7 +758,6 @@ class PacemakerExtractorApp:
                             data.get_value('ASVP'),
                             data.get_value('APVS'),
                             data.get_value('APVP'),
-                            data.get_value('キャプチャ閾値'),
                             data.get_value('AMVS'),
                             data.get_value('VSオンリー'),
                             data.get_value('AMVP'),
