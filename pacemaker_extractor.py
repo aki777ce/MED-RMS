@@ -1,3 +1,4 @@
+
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import PyPDF2
@@ -34,8 +35,8 @@ class DeviceData:
         self.AMVP = kwargs.get('AMVP', None)
         self.VPオンリー = kwargs.get('VPオンリー', None)
         # Cobalt/Evera用パラメータ
-        self.RVコイルインピーダンス = kwargs.get('RVコイルインピーダンス', None)
-        self.SVCコイルインピーダンス = kwargs.get('SVCコイルインピーダンス', None)
+        self.RVコイル = kwargs.get('RVコイル', None)
+        self.SVCコイル = kwargs.get('SVCコイル', None)
         self.VF治療回数 = kwargs.get('VF治療回数', None)
         self.VT治療回数 = kwargs.get('VT治療回数', None)
         # LV関連パラメータ
@@ -172,7 +173,7 @@ class PacemakerExtractorApp:
             '心房ペーシング閾値', '心房パルス幅', '心室ペーシング閾値', '心室パルス幅',
             'P波高値', 'R波高値', '予測寿命_最小', '予測寿命_最大', 'ATAF時間パーセント', 'VT回数',  # ここを変更
             'AS-VS%', 'AS-VP%', 'AP-VS%', 'AP-VP%', 'AMVS', 'VSオンリー',
-            'AMVP', 'VPオンリー', 'RVコイルインピーダンス', 'SVCコイルインピーダンス',
+            'AMVP', 'VPオンリー', 'RVコイル', 'SVCコイル',
             'VF治療回数', 'VT治療回数', 'LVインピーダンス', 'LVペーシング閾値', 'LVパルス幅'
         ], show='headings', style='Modern.Treeview')
         
@@ -204,8 +205,8 @@ class PacemakerExtractorApp:
             'VSオンリー': 'VSオンリー',
             'AMVP': 'AMVP',
             'VPオンリー': 'VPオンリー',
-            'RVコイルインピーダンス': 'RVコイル',
-            'SVCコイルインピーダンス': 'SVCコイル',
+            'RVコイル': 'RVコイル',
+            'SVCコイル': 'SVCコイル',
             'VF治療回数': 'VF治療回数',
             'VT治療回数': 'VT治療回数',
             'LVインピーダンス': 'LVインピーダンス',
@@ -345,7 +346,7 @@ class PacemakerExtractorApp:
             data.P波高値, data.R波高値,
             data.予測寿命_最小, data.予測寿命_最大,
             data.キャプチャ閾値, data.AMVS, data.VSオンリー,
-            data.RVコイルインピーダンス, data.SVCコイルインピーダンス,
+            data.RVコイル, data.SVCコイル,
             data.LVインピーダンス, data.LVペーシング閾値
         ]
         # 1つでもNoneでない値があればTrue
@@ -417,12 +418,12 @@ class PacemakerExtractorApp:
                     r'キャプチャ閾値\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)',
                     r'キャプチャ閾値.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)'
                 ]
-
                 # 1値パターン（心室のみ）
                 single_thresh_patterns = [
                     r'キャプチャ閾値\s+(\d+\.?\d*)\s*V\s*\((\d+\.?\d*)\s*ms\)(?!\s+\d)',
                     r'キャプチャ閾値\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)',
-                    r'キャプチャ閾値.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)'
+                    r'キャプチャ閾値.*?(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V(?!\s+\d)',
+                    r'キャプチャ閾値\s+(\d+\.?\d*)\s*ms\s*で\s*(\d+\.?\d*)\s*V'
                 ]
 
                 # 3値パターン
@@ -589,18 +590,16 @@ class PacemakerExtractorApp:
                     if match:
                         setattr(data, mode, match.group(1))
 
-            elif device_type in ["Cobalt", "Evera"]:
-                
-                # コイルインピーダンスの抽出
-                coil_patterns = {
-                     'RVコイルインピーダンス': r'RV\s*=\s*(\d+)\s*Ω',
-                      'SVCコイルインピーダンス': r'SVC\s*=\s*(\d+)\s*Ω'
-                      }
-                        
-                for param, pattern in coil_patterns.items():
-                     match = re.search(pattern, section)
-                     if match:
-                         setattr(data, param, match.group(1))
+                    # コイルインピーダンスの抽出
+                    coil_patterns = {
+                        'RVコイル': r'RV\s*=\s*(\d+)\s*Ω|除細動インピーダンス\s*RV\s*([0-9]+)\s*Ω',
+                        'SVCコイル': r'SVC\s*=\s*(\d+)\s*Ω|除細動インピーダンス\s*SVC\s*(\d+)\s*Ω'
+                    }
+                    
+                    for param, pattern in coil_patterns.items():
+                        match = re.search(pattern, section)
+                        if match:
+                            setattr(data, param, match.group(1) or match.group(2))
 
                 # 治療回数の抽出
                 therapy_patterns = {
@@ -696,8 +695,8 @@ class PacemakerExtractorApp:
                     data.get_value('VSオンリー'),
                     data.get_value('AMVP'),
                     data.get_value('VPオンリー'),
-                    data.get_value('RVコイルインピーダンス'),
-                    data.get_value('SVCコイルインピーダンス'),
+                    data.get_value('RVコイル'),
+                    data.get_value('SVCコイル'),
                     data.get_value('VF治療回数'),
                     data.get_value('VT治療回数'),
                     data.get_value('LVインピーダンス'),
@@ -732,8 +731,8 @@ class PacemakerExtractorApp:
                         "AT/AF時間%", "VT回数",
                         "AS-VS%", "AS-VP%", "AP-VS%", "AP-VP%",
                         "AMVS", "VSオンリー",
-                        "AMVP", "VPオンリー", "RVコイルインピーダンス",
-                        "SVCコイルインピーダンス", "VF治療回数", "VT治療回数",
+                        "AMVP", "VPオンリー", "RVコイル",
+                        "SVCコイル", "VF治療回数", "VT治療回数",
                         "LVインピーダンス", "LVペーシング閾値", "LVパルス幅"
                     ])
                     
@@ -762,8 +761,8 @@ class PacemakerExtractorApp:
                             data.get_value('VSオンリー'),
                             data.get_value('AMVP'),
                             data.get_value('VPオンリー'),
-                            data.get_value('RVコイルインピーダンス'),
-                            data.get_value('SVCコイルインピーダンス'),
+                            data.get_value('RVコイル'),
+                            data.get_value('SVCコイル'),
                             data.get_value('VF治療回数'),
                             data.get_value('VT治療回数'),
                             data.get_value('LVインピーダンス'),
